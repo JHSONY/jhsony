@@ -1,0 +1,796 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>북미 천연가스 지역별 Flow 대시보드</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+// Minimal local D3-like shim (select/selectAll/attr/style/text/html/on/classed/append/data/enter/scaleSqrt/max/pointer).
+// Covers only what this page uses, so the dashboard has zero external/network dependencies.
+(function(){
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const SVG_TAGS = new Set(["svg","g","path","ellipse","text","defs","marker","circle","line","rect"]);
+
+  function wrap(nodes){
+    return {
+      _nodes: nodes,
+      node(){ return this._nodes[0]; },
+      empty(){ return this._nodes.length===0; },
+      attr(name, value){
+        this._nodes.forEach((n,i)=>{
+          const v = typeof value === 'function' ? value.call(n, n.__data__, i) : value;
+          if(v===null||v===undefined) n.removeAttribute(name); else n.setAttribute(name, v);
+        });
+        return this;
+      },
+      style(name, value){
+        this._nodes.forEach((n,i)=>{
+          const v = typeof value === 'function' ? value.call(n, n.__data__, i) : value;
+          if(v===null||v===undefined) n.style.removeProperty(name); else n.style[name]=v;
+        });
+        return this;
+      },
+      text(value){
+        this._nodes.forEach((n,i)=>{
+          const v = typeof value === 'function'? value.call(n, n.__data__, i): value;
+          n.textContent = v;
+        });
+        return this;
+      },
+      html(value){
+        this._nodes.forEach(n=>{ n.innerHTML = value; });
+        return this;
+      },
+      on(event, handler){
+        this._nodes.forEach(n=>{ n.addEventListener(event, function(ev){ handler.call(n, ev); }); });
+        return this;
+      },
+      classed(name, value){
+        this._nodes.forEach((n,i)=>{
+          const v = typeof value === 'function'? value.call(n, n.__data__, i): value;
+          n.classList.toggle(name, !!v);
+        });
+        return this;
+      },
+      append(tag){
+        const isSvg = SVG_TAGS.has(tag);
+        const newNodes = this._nodes.map(n=>{
+          const el = isSvg ? document.createElementNS(SVGNS, tag) : document.createElement(tag);
+          n.appendChild(el);
+          return el;
+        });
+        return wrap(newNodes);
+      },
+      remove(){
+        this._nodes.forEach(n=>{ if(n.parentNode) n.parentNode.removeChild(n); });
+        return this;
+      },
+      selectAll(sel){
+        const parent = this._nodes[0];
+        const found = parent ? Array.from(parent.querySelectorAll(sel)) : [];
+        const w = wrap(found);
+        w._parent = parent;
+        return w;
+      },
+      data(arr){ this._boundData = arr; return this; },
+      enter(){
+        const data = this._boundData || [];
+        const parent = this._parent;
+        return {
+          append: (tag)=>{
+            const isSvg = SVG_TAGS.has(tag);
+            const created = data.map(d=>{
+              const el = isSvg ? document.createElementNS(SVGNS, tag) : document.createElement(tag);
+              el.__data__ = d;
+              parent.appendChild(el);
+              return el;
+            });
+            return wrap(created);
+          }
+        };
+      }
+    };
+  }
+
+  window.d3 = {
+    select(sel){
+      const n = typeof sel === 'string' ? document.querySelector(sel) : sel;
+      return wrap(n ? [n] : []);
+    },
+    selectAll(sel){
+      return wrap(Array.from(document.querySelectorAll(sel)));
+    },
+    scaleSqrt(){
+      let domain=[0,1], range=[0,1];
+      function scale(v){
+        const d0=Math.sqrt(domain[0]), d1=Math.sqrt(domain[1]);
+        const t = (Math.sqrt(v)-d0)/((d1-d0)||1);
+        return range[0] + t*(range[1]-range[0]);
+      }
+      scale.domain = (d)=>{domain=d; return scale;};
+      scale.range = (r)=>{range=r; return scale;};
+      return scale;
+    },
+    max(arr){ return arr.reduce((a,b)=>Math.max(a,b), -Infinity); },
+    pointer(ev, node){
+      const rect = node.getBoundingClientRect();
+      return [ev.clientX-rect.left, ev.clientY-rect.top];
+    }
+  };
+})();
+</script>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2230; --text:#e6edf3; --sub:#9fb0c3; --line:#2a3242;
+    --accent:#5eb3ff;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:'Segoe UI','Malgun Gothic',sans-serif;}
+  #app{display:grid; grid-template-columns: 320px 1fr; grid-template-rows: auto 1fr; height:100vh;}
+  header{grid-column:1/3; background:linear-gradient(90deg,#0f2942,#0d1117); padding:12px 20px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;}
+  header h1{font-size:18px; margin:0; font-weight:600; letter-spacing:.3px;}
+  header .sub{font-size:12px; color:var(--sub); margin-top:2px;}
+  .controls{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .controls label{font-size:12px; color:var(--sub); margin-right:4px;}
+  select, button{background:var(--panel2); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font-size:13px;}
+  button{cursor:pointer;}
+  button:hover{border-color:var(--accent);}
+  button.active{background:var(--accent); color:#04121f; border-color:var(--accent);}
+  #sidebar{background:var(--panel); border-right:1px solid var(--line); overflow-y:auto; padding:16px;}
+  #sidebar h2{font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--sub); margin:18px 0 8px;}
+  #sidebar h2:first-child{margin-top:0;}
+  .legend-item{display:flex; align-items:center; gap:8px; padding:5px 6px; border-radius:6px; cursor:pointer; font-size:13px;}
+  .legend-item:hover{background:var(--panel2);}
+  .legend-item.selected{background:#22314a; outline:1px solid var(--accent);}
+  .swatch{width:14px;height:14px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.3);}
+  #flowList{font-size:12.5px;}
+  .flow-row{display:flex; justify-content:space-between; gap:6px; padding:6px 6px; border-bottom:1px solid var(--line); cursor:pointer;}
+  .flow-row:hover, .flow-row.hover{background:var(--panel2);}
+  .flow-row .route{color:var(--text);}
+  .flow-row .val{color:var(--accent); font-variant-numeric:tabular-nums; white-space:nowrap;}
+  #detail{font-size:12.5px; line-height:1.6; color:var(--sub); background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:10px 12px;}
+  #detail b{color:var(--text);}
+  #mapWrap{position:relative; overflow:hidden; background:#05080d; display:flex; align-items:center; justify-content:center;}
+  #mapStage{position:relative; transform-origin:0 0; cursor:grab;}
+  #mapStage.dragging{cursor:grabbing;}
+  #zoomRow{display:flex; align-items:center; gap:4px;}
+  #zoomRow button{width:30px; padding:6px 0; font-size:15px; line-height:1;}
+  #zoomResetBtn{width:auto; padding:6px 8px; font-size:12px;}
+  #mapStage svg{position:absolute; inset:0; width:100%; height:100%; display:block;}
+  #bgimg{position:absolute; inset:0; width:100%; height:100%; display:block; opacity:0.9;}
+  .region-poly{stroke-width:2; cursor:pointer; transition:opacity .15s, filter .15s;}
+  .region-poly:hover{filter:brightness(1.25);}
+  .region-poly.dim{opacity:.18;}
+  .region-label{font-size:15px; font-weight:700; fill:#111; paint-order:stroke; stroke:#fff; stroke-width:3px; pointer-events:none; text-shadow:0 1px 2px rgba(0,0,0,.4);}
+  .play-poly{pointer-events:none;}
+  .play-label{font-size:15px; font-weight:800; fill:#fff3d6; opacity:.95; paint-order:stroke; stroke:#1a1200; stroke-width:3px; pointer-events:none;}
+  .henry-hub-star{pointer-events:none;}
+  .henry-hub-label{font-size:18px; font-weight:800; fill:#ffd93d; opacity:1; paint-order:stroke; stroke:#1a1200; stroke-width:3.2px; pointer-events:none;}
+  .flow-arrow{fill:none; cursor:pointer;}
+  .flow-arrow.dim, .flow-arrow-outline.dim{opacity:.12;}
+  .flow-arrow-hit{fill:none; stroke:transparent; stroke-width:40; cursor:pointer;}
+  #tooltip{position:absolute; pointer-events:none; background:rgba(10,14,20,.95); border:1px solid var(--accent); border-radius:8px; padding:8px 12px; font-size:12.5px; color:var(--text); box-shadow:0 4px 18px rgba(0,0,0,.5); display:none; z-index:20; max-width:260px;}
+  #tooltip b{color:var(--accent);}
+  #opacityRow{display:flex; align-items:center; gap:6px;}
+  input[type=range]{width:110px;}
+  #footer-credit{position:absolute; bottom:6px; right:10px; font-size:10.5px; color:#6b7889; z-index:5;}
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-thumb{background:#2a3242; border-radius:4px;}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div>
+      <h1>🇺🇸 북미 천연가스 지역간 Flow 대시보드</h1>
+      <div class="sub">Base map: NGI North America Natural Gas Pipelines (2023) · Regions: S&P Global 지역구분 · Flow: 미국 flow.xlsx</div>
+    </div>
+    <div class="controls">
+      <div id="opacityRow">
+        <label>배경 지도 투명도</label>
+        <input type="range" id="bgOpacity" min="0" max="100" value="90">
+      </div>
+      <label for="dateSel">기준일</label>
+      <select id="dateSel"></select>
+      <div id="zoomRow">
+        <button id="zoomOutBtn" title="축소">−</button>
+        <button id="zoomInBtn" title="확대">+</button>
+        <button id="zoomResetBtn" title="확대 초기화">100%</button>
+      </div>
+      <button id="resetBtn">전체 보기</button>
+    </div>
+  </header>
+  <div id="sidebar">
+    <h2>선택 상세</h2>
+    <div id="detail">지역 또는 화살표를 클릭하면 상세 정보가 표시됩니다.</div>
+    <h2>지역 (클릭하여 필터)</h2>
+    <div id="legend"></div>
+    <h2>Flow 목록 (클릭 시 지도에 강조)</h2>
+    <div id="flowList"></div>
+  </div>
+  <div id="mapWrap">
+    <div id="mapStage">
+      <img id="bgimg" src="assets/na_map_qgis.jpg">
+      <svg id="svg" viewBox="0 0 2022 1414" preserveAspectRatio="none"></svg>
+    </div>
+    <div id="tooltip"></div>
+    <div id="footer-credit">© 2026 S&P Global · Natural Gas Intelligence(NatGasIntel.com) · 2023 Edition</div>
+  </div>
+</div>
+
+<script>
+const MAP_W = 2022, MAP_H = 1414;
+function fitMapStage(){
+  const wrap = document.getElementById("mapWrap");
+  const stage = document.getElementById("mapStage");
+  const cw = wrap.clientWidth, ch = wrap.clientHeight;
+  const targetRatio = MAP_W / MAP_H;
+  let w, h;
+  if(cw/ch > targetRatio){ h = ch; w = ch*targetRatio; }
+  else { w = cw; h = cw/targetRatio; }
+  stage.style.width = w+"px";
+  stage.style.height = h+"px";
+  resetZoom();
+}
+
+// --- Map zoom / pan ---
+const ZOOM_MIN = 1, ZOOM_MAX = 6;
+let zoomScale = 1, zoomX = 0, zoomY = 0;
+
+function applyZoomTransform(){
+  const stage = document.getElementById("mapStage");
+  stage.style.transform = `translate(${zoomX}px, ${zoomY}px) scale(${zoomScale})`;
+}
+
+function resetZoom(){
+  zoomScale = 1; zoomX = 0; zoomY = 0;
+  applyZoomTransform();
+  updateZoomLabel();
+}
+
+function updateZoomLabel(){
+  const btn = document.getElementById("zoomResetBtn");
+  if(btn) btn.textContent = Math.round(zoomScale*100)+"%";
+}
+
+function zoomAt(clientX, clientY, factor){
+  const wrap = document.getElementById("mapWrap");
+  const stage = document.getElementById("mapStage");
+  const wrapRect = wrap.getBoundingClientRect();
+  const mouseX = clientX - wrapRect.left - stage.offsetLeft;
+  const mouseY = clientY - wrapRect.top - stage.offsetTop;
+  const newScale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomScale*factor));
+  const k = newScale/zoomScale;
+  zoomX = mouseX - (mouseX - zoomX)*k;
+  zoomY = mouseY - (mouseY - zoomY)*k;
+  zoomScale = newScale;
+  if(zoomScale===ZOOM_MIN){ zoomX = 0; zoomY = 0; }
+  applyZoomTransform();
+  updateZoomLabel();
+}
+
+function initZoomPan(){
+  const wrap = document.getElementById("mapWrap");
+  const stage = document.getElementById("mapStage");
+  wrap.addEventListener("wheel", (ev)=>{
+    ev.preventDefault();
+    const factor = ev.deltaY < 0 ? 1.2 : 1/1.2;
+    zoomAt(ev.clientX, ev.clientY, factor);
+  }, {passive:false});
+
+  let dragging=false, startX=0, startY=0, startZoomX=0, startZoomY=0, dragDist=0;
+  stage.addEventListener("mousedown", (ev)=>{
+    if(zoomScale<=ZOOM_MIN) return;
+    dragging=true; dragDist=0; startX=ev.clientX; startY=ev.clientY; startZoomX=zoomX; startZoomY=zoomY;
+    stage.classList.add("dragging");
+    ev.preventDefault();
+  });
+  window.addEventListener("mousemove", (ev)=>{
+    if(!dragging) return;
+    zoomX = startZoomX + (ev.clientX-startX);
+    zoomY = startZoomY + (ev.clientY-startY);
+    dragDist = Math.max(dragDist, Math.abs(ev.clientX-startX)+Math.abs(ev.clientY-startY));
+    applyZoomTransform();
+  });
+  window.addEventListener("mouseup", ()=>{
+    if(dragging && dragDist>5){
+      // suppress the click that follows a real drag so it doesn't also select whatever is underneath
+      const suppress = (ev)=>{ ev.stopPropagation(); ev.preventDefault(); window.removeEventListener("click", suppress, true); };
+      window.addEventListener("click", suppress, true);
+    }
+    dragging=false; stage.classList.remove("dragging");
+  });
+
+  document.getElementById("zoomInBtn").addEventListener("click", ()=>{
+    const r = wrap.getBoundingClientRect();
+    zoomAt(r.left+r.width/2, r.top+r.height/2, 1.4);
+  });
+  document.getElementById("zoomOutBtn").addEventListener("click", ()=>{
+    const r = wrap.getBoundingClientRect();
+    zoomAt(r.left+r.width/2, r.top+r.height/2, 1/1.4);
+  });
+  document.getElementById("zoomResetBtn").addEventListener("click", resetZoom);
+}
+
+const REGION_COLORS = {
+  "Canada":"#d97fd1",
+  "Western":"#8f8fe0",
+  "Rocky Mountain":"#e8a488",
+  "Mid-Continent":"#59c9c4",
+  "Northeast":"#d97e86",
+  "Texas":"#8fce8f",
+  "Southeast":"#f0c777",
+  "Gulf of Mexico":"#b07fd1",
+  "Mexico":"#cfd6de"
+};
+
+// Region shapes come straight from the user's own QGIS project (미국 map.qgz): S&P지역.shp (7 regions)
+// and mexico.shp (Mexico), transformed with the EXACT extent QGIS recorded for the freehand-
+// georeferenced basemap raster (지도.png, aka assets/na_map_qgis.jpg at 2x resolution). This is a
+// direct mathematical projection (no fitting/guessing) — px=(x-xmin)/(xmax-xmin)*W,
+// py=(ymax-y)/(ymax-ymin)*H — so the shapes land exactly where the user placed them in QGIS.
+// Gulf of Mexico is not in either shapefile, so it remains a small hand-fit approximation.
+const REGION_POLYGONS = {
+  "Canada": [[82,17],[572,20],[575,160],[727,160],[729,217],[1778,218],[1823,240],[1880,291],[1888,328],[1838,383],[1796,360],[1758,308],[1740,328],[1705,425],[1595,478],[1531,550],[1445,590],[1408,631],[1385,630],[1393,568],[1362,556],[1355,518],[1318,505],[1307,466],[1278,458],[1273,435],[1237,428],[1220,405],[1172,400],[1157,423],[1103,445],[979,431],[832,426],[609,428],[409,390],[177,355],[87,245],[69,147],[107,102],[82,75]],
+  "Western": [[169,341],[167,342],[178,357],[355,386],[348,427],[351,438],[384,490],[378,500],[376,524],[391,524],[391,540],[412,572],[459,572],[470,575],[461,680],[359,665],[325,862],[500,888],[716,897],[709,1118],[597,1119],[578,1101],[519,1094],[511,1111],[416,1110],[358,1082],[274,1037],[201,1038],[172,1019],[139,958],[69,906],[29,779],[6,666],[13,645],[31,616],[31,568],[81,471],[97,430],[92,351],[111,345],[141,361]],
+  "Rocky Mountain": [[720,897],[501,888],[326,861],[360,667],[463,679],[471,573],[467,570],[413,569],[393,535],[394,521],[381,521],[385,485],[348,427],[355,390],[610,430],[693,430],[694,546],[689,733],[750,741],[749,895]],
+  "Mid-Continent": [[700,432],[975,432],[1096,448],[1146,432],[1115,451],[1074,482],[1084,489],[1099,490],[1120,499],[1151,482],[1169,464],[1187,470],[1207,484],[1261,470],[1280,460],[1282,475],[1300,478],[1314,489],[1310,503],[1252,509],[1227,518],[1221,529],[1232,545],[1227,618],[1238,660],[1249,672],[1264,663],[1266,629],[1260,605],[1252,591],[1250,565],[1261,543],[1282,523],[1285,513],[1314,506],[1346,524],[1355,551],[1386,571],[1375,646],[1328,660],[1355,774],[1321,816],[1254,827],[1244,860],[1218,861],[1163,1020],[1165,1042],[1065,1040],[1062,1037],[1063,1011],[903,1012],[823,987],[828,920],[725,914],[717,911],[720,903],[750,897],[752,743],[691,730]],
+  "Northeast": [[1218,886],[1218,863],[1244,859],[1254,831],[1321,817],[1356,772],[1331,664],[1381,648],[1397,657],[1427,651],[1470,626],[1507,593],[1534,552],[1581,528],[1579,513],[1574,509],[1596,481],[1704,429],[1728,386],[1734,357],[1758,315],[1794,357],[1794,369],[1818,373],[1826,383],[1844,384],[1836,409],[1824,416],[1821,429],[1799,438],[1776,476],[1776,502],[1788,525],[1808,531],[1819,523],[1815,538],[1783,554],[1763,568],[1756,582],[1733,607],[1706,618],[1715,651],[1710,673],[1701,691],[1704,707],[1713,720],[1708,747],[1698,767],[1698,781],[1691,790],[1492,840]],
+  "Texas": [[718,914],[822,917],[823,991],[902,1013],[1057,1015],[1056,1095],[1068,1113],[1084,1149],[1081,1172],[1068,1181],[1040,1190],[1023,1209],[972,1232],[946,1263],[948,1323],[941,1343],[914,1347],[882,1334],[788,1194],[738,1190],[712,1218],[674,1206],[649,1186],[630,1151],[605,1125],[711,1121]],
+  "Southeast": [[1061,1041],[1167,1041],[1164,1018],[1212,888],[1258,883],[1269,878],[1357,862],[1487,844],[1692,789],[1726,823],[1720,843],[1702,871],[1676,877],[1657,906],[1636,920],[1615,969],[1570,1017],[1562,1072],[1619,1137],[1658,1200],[1664,1268],[1632,1287],[1609,1260],[1573,1243],[1535,1200],[1517,1148],[1471,1117],[1422,1138],[1391,1126],[1341,1120],[1305,1128],[1255,1131],[1252,1137],[1256,1165],[1270,1169],[1270,1184],[1234,1182],[1189,1187],[1167,1176],[1137,1172],[1106,1183],[1090,1172],[1085,1158],[1086,1141],[1074,1128],[1058,1090]],
+  "Mexico": [[197,1056],[475,1124],[560,1110],[647,1198],[719,1231],[768,1207],[829,1254],[898,1363],[893,1384],[530,1386],[204,1063]],
+  "Gulf of Mexico": [[1030,1150],[1220,1170],[1320,1240],[1260,1310],[1120,1320],[1010,1250]]
+};
+const REGION_CENTROIDS = {
+  "Canada": [899,288],
+  "Western": [305,772],
+  "Rocky Mountain": [543,667],
+  "Mid-Continent": [1010,707],
+  "Northeast": [1572,652],
+  "Texas": [864,1121],
+  "Southeast": [1404,1015],
+  "Mexico": [575,1250],
+  "Gulf of Mexico": [1160,1240]
+};
+// Pure label-position nudges (region fill/centroid/arrow-anchor stay exact; only the text moves).
+const REGION_LABEL_OFFSETS = {
+  "Western": [-95,-10]
+};
+// Exact arrow paths for all 15 region-pairs, digitized by the user directly in QGIS (미국 map.qgz,
+// layer "화살표 new" / 화살표 new.shp — one line per pair, each in its own color). Matched to a
+// FLOW_DATA row by testing which region polygon each endpoint falls inside, then reoriented so the
+// first point is always the row's "From Region" (keyed "From->To", direction-independent of the
+// sign-flip applied for display). Replaces the earlier hand-picked waypoints/arcs entirely.
+const FLOW_PATHS = {
+  "Canada->Northeast": { color:"#78cd63", points:[[1491,492.8],[1643.8,532.7]] },
+  "Texas->Southeast": { color:"#965dae", points:[[1022.3,1161.1],[1131.7,1119.4]] },
+  "Canada->Western": { color:"#d2602c", points:[[289.8,317.5],[241.2,416.4]] },
+  "Mid-Continent->Texas": { color:"#de50a5", points:[[907.8,949.3],[906,1079.5]] },
+  "Northeast->Mid-Continent": { color:"#569e2d", points:[[1477.1,702.8],[1244.5,772.3]] },
+  "Canada->Rocky Mountain": { color:"#898de4", points:[[593.6,390.4],[545,459.8]] },
+  "Rocky Mountain->Mid-Continent": { color:"#e85a2b", points:[[673.4,739.3],[821,800]] },
+  "Mid-Continent->Southeast": { color:"#265fe3", points:[[1142.1,932],[1218.5,984]] },
+  "Northeast->Southeast": { color:"#d321e0", points:[[1423.3,777.5],[1282.7,914.6]] },
+  "Rocky Mountain->Western": { color:"#ed17d4", points:[[494.6,709.8],[366.2,642.1]] },
+  "Texas->Mexico": { color:"#7df2a2", points:[[906,1249.6],[833.1,1355.5]] },
+  "Western->Mexico": { color:"#8d0d42", points:[[591.8,1076],[576.2,1175]] },
+  "Texas->Western": { color:"#0038fe", points:[[767.2,1135.1],[640.4,1086.5]] },
+  "Mid-Continent->Canada": { color:"#569e2d", points:[[937.3,513.6],[904.3,386.9]] },
+  "Gulf of Mexico->Southeast": { color:"#22108b", points:[[1145.6,1237.5],[1156,1135.1]] }
+};
+
+const FLOW_DATA = {"header": ["From Region", "To Region", "30 Day Avg", "7/6/26", "7/5/26", "7/4/26", "7/3/26", "7/2/26", "7/1/26", "6/30/26", "6/29/26", "6/28/26", "6/27/26", "6/26/26", "6/25/26", "6/24/26", "6/23/26", "6/22/26", "6/21/26", "6/20/26", "6/19/26", "6/18/26", "6/17/26", "6/16/26"], "rows": [["Canada", "Northeast", -152.0, 95.0, 266.0, 381.0, 565.0, 612.0, 451.0, 171.0, -245.0, -320.0, -204.0, -343.0, -420.0, -360.0, -325.0, -422.0, -534.0, -498.0, -376.0, -448.0, -430.0, -357.0], ["Texas", "Southeast", 8633.0, 8577.0, 8530.0, 8676.0, 8815.0, 8997.0, 9421.0, 8963.0, 8938.0, 8768.0, 8695.0, 8984.0, 8426.0, 8492.0, 8410.0, 8468.0, 8514.0, 8582.0, 7863.0, 8047.0, 8375.0, 8249.0], ["Canada", "Western", 3020.0, 2813.0, 2765.0, 2682.0, 2154.0, 2022.0, 2273.0, 2847.0, 2979.0, 3038.0, 3289.0, 3300.0, 3501.0, 3460.0, 3297.0, 3241.0, 3214.0, 3256.0, 3330.0, 3360.0, 3313.0, 3409.0], ["Mid-Continent", "Texas", -1148.0, -994.0, -783.0, -576.0, -442.0, -329.0, -314.0, -671.0, -1157.0, -1406.0, -1102.0, -900.0, -1238.0, -1000.0, -1045.0, -1434.0, -1477.0, -1376.0, -1148.0, -1459.0, -1449.0, -1791.0], ["Northeast", "Mid-Continent", 6058.0, 5847.0, 5261.0, 5795.0, 6051.0, 5672.0, 5350.0, 6567.0, 6626.0, 6540.0, 6731.0, 6353.0, 6557.0, 6410.0, 5994.0, 5832.0, 5773.0, 5774.0, 5979.0, 6131.0, 5137.0, 6084.0], ["Canada", "Rocky Mountain", 437.0, 475.0, 472.0, 463.0, 389.0, 444.0, 411.0, 400.0, 401.0, 377.0, 411.0, 484.0, 451.0, 442.0, 554.0, 511.0, 484.0, 515.0, 525.0, 451.0, 414.0, 411.0], ["Rocky Mountain", "Mid-Continent", 3456.0, 3629.0, 3642.0, 3638.0, 3560.0, 3544.0, 3216.0, 3179.0, 3173.0, 3151.0, 3171.0, 3226.0, 3126.0, 3128.0, 3302.0, 3597.0, 3584.0, 3600.0, 3668.0, 3462.0, 3250.0, 3539.0], ["Mid-Continent", "Southeast", 791.0, 731.0, 745.0, 806.0, 748.0, 762.0, 729.0, 852.0, 837.0, 833.0, 820.0, 757.0, 809.0, 843.0, 866.0, 843.0, 860.0, 932.0, 842.0, 735.0, 771.0, 857.0], ["Northeast", "Southeast", 8922.0, 8024.0, 7178.0, 6993.0, 7578.0, 7888.0, 8446.0, 8971.0, 9457.0, 9592.0, 9628.0, 9369.0, 9593.0, 9570.0, 9981.0, 9903.0, 9876.0, 9919.0, 9500.0, 9748.0, 9816.0, 9086.0], ["Rocky Mountain", "Western", 2156.0, 1957.0, 1959.0, 1975.0, 2017.0, 2169.0, 2351.0, 2430.0, 2360.0, 2453.0, 2351.0, 2368.0, 2435.0, 2391.0, 2277.0, 2005.0, 2027.0, 2094.0, 2241.0, 2262.0, 2369.0, 2117.0], ["Texas", "Mexico", 6409.0, 6084.0, 6112.0, 6226.0, 6413.0, 6616.0, 6707.0, 6316.0, 5988.0, 6129.0, 6722.0, 6568.0, 6812.0, 6745.0, 6471.0, 6266.0, 6332.0, 6823.0, 6848.0, 6726.0, 6817.0, 6519.0], ["Western", "Mexico", 928.0, 752.0, 719.0, 795.0, 758.0, 1159.0, 1128.0, 1088.0, 987.0, 879.0, 872.0, 965.0, 911.0, 844.0, 917.0, 981.0, 1026.0, 910.0, 1053.0, 1160.0, 1106.0, 1091.0], ["Texas", "Western", -2834.0, -2939.0, -2946.0, -2748.0, -2723.0, -2675.0, -3112.0, -3115.0, -3006.0, -2891.0, -3188.0, -3136.0, -3102.0, -3066.0, -2958.0, -3227.0, -3201.0, -3208.0, -3119.0, -2878.0, -3016.0, -2482.0], ["Mid-Continent", "Canada", -2078.0, -1828.0, -2147.0, -2025.0, -2282.0, -2221.0, -2761.0, -2293.0, -1944.0, -1779.0, -1878.0, -2158.0, -1878.0, -2087.0, -2329.0, -2087.0, -2184.0, -2271.0, -2119.0, -1425.0, -1948.0, -1452.0], ["Gulf of Mexico", "Southeast", 1853.0, 1878.0, 1877.0, 1874.0, 1830.0, 1806.0, 1698.0, 1704.0, 1751.0, 1748.0, 1752.0, 1986.0, 1977.0, 2004.0, 1935.0, 1949.0, 1854.0, 1751.0, 1959.0, 1887.0, 1920.0, 1878.0]]};
+
+let RAW = null;
+let selectedRegion = null;
+let selectedFlowKey = null;
+let currentDateIdx = 0;
+
+const svg = d3.select("#svg");
+const gRegions = svg.append("g").attr("class","g-regions");
+const gArrows = svg.append("g").attr("class","g-arrows");
+const gLabels = svg.append("g").attr("class","g-labels");
+const gPlays = svg.append("g").attr("class","g-plays");
+const tooltip = d3.select("#tooltip");
+
+// Arrowhead markers: one shared oversized dark one behind (drawn on the outline path) so the tip
+// gets a clean dark border, plus one correctly-sized colored marker per distinct flow color on top.
+const DART = "M0,0 L10,5 L0,10 z";
+const defs = svg.append("defs");
+defs.append("marker")
+  .attr("id","arrowhead-outline")
+  .attr("viewBox","0 0 10 10").attr("refX",7.2).attr("refY",5)
+  .attr("markerWidth",2.3).attr("markerHeight",2.3).attr("markerUnits","strokeWidth")
+  .attr("orient","auto-start-reverse")
+  .append("path").attr("d",DART).attr("fill","#1a1200");
+defs.append("marker")
+  .attr("id","arrowhead-default")
+  .attr("viewBox","0 0 10 10").attr("refX",7.2).attr("refY",5)
+  .attr("markerWidth",1.7).attr("markerHeight",1.7).attr("markerUnits","strokeWidth")
+  .attr("orient","auto-start-reverse")
+  .append("path").attr("d",DART).attr("fill","#ffce54");
+const seenColors = new Set();
+Object.values(FLOW_PATHS).forEach(fp=>{
+  if(seenColors.has(fp.color)) { fp.markerId = "arrowhead-"+slug(fp.color); return; }
+  seenColors.add(fp.color);
+  const mid = "arrowhead-"+slug(fp.color);
+  defs.append("marker")
+    .attr("id", mid)
+    .attr("viewBox","0 0 10 10").attr("refX",7.2).attr("refY",5)
+    .attr("markerWidth",1.7).attr("markerHeight",1.7).attr("markerUnits","strokeWidth")
+    .attr("orient","auto-start-reverse")
+    .append("path").attr("d",DART).attr("fill", fp.color);
+  fp.markerId = mid;
+});
+
+function fmt(v){
+  if(v===null || v===undefined || isNaN(v)) return "-";
+  return Math.round(v).toLocaleString();
+}
+
+function buildDateSelector(header){
+  const dateCols = header.slice(2);
+  const sel = d3.select("#dateSel");
+  sel.selectAll("option").data(dateCols).enter().append("option")
+    .attr("value",(d,i)=>i).text(d=>d);
+  sel.on("change", function(){ currentDateIdx = +this.value; renderAll(); });
+}
+
+function getValue(row){ return row[2+currentDateIdx]; }
+
+let regionCentroids = REGION_CENTROIDS;
+
+function polyToPath(points){
+  return "M " + points.map(p=>p.join(",")).join(" L ") + " Z";
+}
+
+function buildMap(){
+  Object.entries(REGION_POLYGONS).forEach(([region, points])=>{
+    gRegions.append("path")
+      .attr("class","region-poly")
+      .attr("id","region-"+slug(region))
+      .attr("d", polyToPath(points))
+      .attr("fill", REGION_COLORS[region])
+      .attr("fill-opacity", region==="Gulf of Mexico" ? 0.55 : 0.42)
+      .attr("stroke", REGION_COLORS[region])
+      .on("click", ()=>onRegionClick(region))
+      .on("mousemove", (ev)=>showTip(ev, `<b>${region}</b>`))
+      .on("mouseleave", hideTip);
+    const c = REGION_CENTROIDS[region];
+    const lbl = REGION_LABEL_OFFSETS[region] || [0,0];
+    gLabels.append("text")
+      .attr("class","region-label")
+      .attr("x", c[0]+lbl[0]).attr("y", c[1]+lbl[1])
+      .attr("text-anchor","middle")
+      .text(region)
+      .style("font-size", region==="Gulf of Mexico" ? "16px" : (region==="Mid-Continent"?"28px":"24px"));
+  });
+}
+
+// Shale play outlines + Henry Hub, digitized by the user in QGIS (미국 map.qgz, layer "주요 포인트" /
+// 주요 포인트.shp) and projected with the same exact formula as REGION_POLYGONS above.
+const PLAY_POLYGONS = {
+  "Appalachia": [[1463.5,789.2],[1436.6,751.9],[1421.0,723.2],[1417.5,650.3],[1431.4,595.6],[1458.3,556.6],[1480.8,530.5],[1506.0,508.8],[1526.0,503.6],[1585.9,508.8],[1628.4,512.3],[1664.0,530.5],[1686.5,525.3],[1689.1,543.6],[1692.6,574.8],[1676.1,598.2],[1653.6,625.1],[1626.7,669.4],[1537.3,777.9],[1545.9,789.2],[1516.4,805.7],[1418.3,876.0],[1404.5,877.7],[1398.4,871.6],[1407.9,858.6],[1442.6,826.5],[1462.6,801.3],[1464.3,788.3]],
+  "Anadarko": [[878.9,914.0],[880.7,914.4],[886.5,918.1],[893.7,931.5],[903.4,949.3],[922.1,966.7],[943.8,988.2],[948.1,1002.5],[949.0,1014.2],[921.9,1017.2],[905.2,1003.1],[898.2,975.8],[889.1,957.6],[872.2,949.5],[864.8,937.0],[868.1,932.8]],
+  "Arkoma": [[991.3,966.7],[1003.5,963.9],[1008.7,970.2],[1010.6,987.7],[1004.1,1000.5],[984.8,1014.4],[975.5,1003.3],[969.8,989.2],[973.7,976.2]],
+  "Haynesville": [[1019.9,1043.3],[1033.8,1041.6],[1053.8,1042.3],[1067.4,1044.9],[1078.0,1049.5],[1079.4,1057.3],[1076.5,1074.6],[1067.6,1084.0],[1050.0,1089.3],[1037.4,1090.4],[1034.7,1088.2],[1036.2,1081.9],[1040.7,1079.5],[1045.5,1070.1],[1043.2,1061.4],[1021.7,1059.8]]
+};
+const PLAY_LABEL_POS = {
+  "Appalachia": [1521,675],
+  "Anadarko": [900,952],
+  "Arkoma": [991,978],
+  "Haynesville": [1047,1059]
+};
+const HENRY_HUB_PX = [1153.9,1156.9];
+
+function starPath(cx, cy, rOuter, rInner, points, rotationDeg){
+  const step = Math.PI / points;
+  const rot = (rotationDeg||-90) * Math.PI/180;
+  let d = "";
+  for(let i=0;i<points*2;i++){
+    const r = i%2===0 ? rOuter : rInner;
+    const angle = rot + i*step;
+    const x = cx + r*Math.cos(angle), y = cy + r*Math.sin(angle);
+    d += (i===0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1) + " ";
+  }
+  return d + "Z";
+}
+
+function buildPlays(){
+  Object.entries(PLAY_POLYGONS).forEach(([name, pts])=>{
+    gPlays.append("path")
+      .attr("class","play-poly")
+      .attr("d", polyToPath(pts))
+      .attr("fill", "#ffcf40")
+      .attr("fill-opacity", 0.38)
+      .attr("stroke", "#fff3d6")
+      .attr("stroke-opacity", 0.95)
+      .attr("stroke-width", 2.5)
+      .attr("stroke-dasharray", "6 3");
+    const [lx,ly] = PLAY_LABEL_POS[name];
+    gPlays.append("text")
+      .attr("class","play-label")
+      .attr("x", lx).attr("y", ly)
+      .attr("text-anchor","middle")
+      .text(name);
+  });
+
+  gPlays.append("path")
+    .attr("class","henry-hub-star")
+    .attr("d", starPath(HENRY_HUB_PX[0], HENRY_HUB_PX[1], 15, 6.5, 5))
+    .attr("fill", "#ffd93d")
+    .attr("stroke", "#7a5b00")
+    .attr("stroke-width", 1.5);
+  gPlays.append("text")
+    .attr("class","henry-hub-label")
+    .attr("x", HENRY_HUB_PX[0]).attr("y", HENRY_HUB_PX[1]-20)
+    .attr("text-anchor","middle")
+    .text("Henry Hub");
+}
+
+function slug(s){ return s.toLowerCase().replace(/[^a-z]+/g,'-'); }
+
+function arcPath(p0, p1, bend){
+  const mx = (p0[0]+p1[0])/2, my = (p0[1]+p1[1])/2;
+  const dx = p1[0]-p0[0], dy = p1[1]-p0[1];
+  const nx = -dy, ny = dx;
+  const len = Math.sqrt(nx*nx+ny*ny) || 1;
+  const cx = mx + (nx/len)*bend, cy = my + (ny/len)*bend;
+  return `M ${p0[0]} ${p0[1]} Q ${cx} ${cy} ${p1[0]} ${p1[1]}`;
+}
+
+// Smooth multi-point curve (chained quadratic Beziers through each interior via-point).
+function smoothPath(pts){
+  let d = `M ${pts[0][0]} ${pts[0][1]}`;
+  for(let i=1;i<pts.length-1;i++){
+    const mx=(pts[i][0]+pts[i+1][0])/2, my=(pts[i][1]+pts[i+1][1])/2;
+    d += ` Q ${pts[i][0]} ${pts[i][1]} ${mx} ${my}`;
+  }
+  const c = pts[pts.length-2], last = pts[pts.length-1];
+  d += ` Q ${c[0]} ${c[1]} ${last[0]} ${last[1]}`;
+  return d;
+}
+
+function shrinkEndpoints(p0, p1, r0, r1){
+  const dx = p1[0]-p0[0], dy = p1[1]-p0[1];
+  const len = Math.sqrt(dx*dx+dy*dy) || 1;
+  const ux = dx/len, uy = dy/len;
+  return [
+    [p0[0]+ux*r0, p0[1]+uy*r0],
+    [p1[0]-ux*r1, p1[1]-uy*r1]
+  ];
+}
+
+let widthScale;
+let arrowColors = {}, arrowMarkers = {};
+
+function renderAll(){
+  const rows = RAW.rows;
+  const vals = rows.map(r=>Math.abs(getValue(r)));
+  widthScale = d3.scaleSqrt().domain([0, d3.max(vals)]).range([3, 14]);
+
+  gArrows.selectAll("*").remove();
+  arrowColors = {}; arrowMarkers = {};
+
+  rows.forEach((r,i)=>{
+    const origFrom = r[0], origTo = r[1];
+    let [from, to] = r;
+    let val = getValue(r);
+    if(val < 0){ [from, to] = [to, from]; val = -val; }
+    const p0 = regionCentroids[from], p1 = regionCentroids[to];
+    if(!p0 || !p1) return;
+    const key = from+"->"+to;
+
+    const fp = FLOW_PATHS[origFrom+"->"+origTo];
+    let d, color = "#ffce54", markerId = "arrowhead-default";
+    if(fp){
+      const pts = (from===origFrom) ? fp.points : fp.points.slice().reverse();
+      d = smoothPath(pts);
+      color = fp.color; markerId = fp.markerId;
+    } else {
+      const bend = 70 * (( (from.length+to.length) % 3 ) - 1);
+      const [a,b] = shrinkEndpoints(p0,p1, 90, 90);
+      d = arcPath(a,b,bend);
+    }
+    arrowColors[i] = color; arrowMarkers[i] = markerId;
+    const sw = widthScale(Math.abs(val));
+
+    gArrows.append("path")
+      .attr("class","flow-arrow-outline")
+      .attr("data-idx", i)
+      .attr("d", d)
+      .attr("fill","none")
+      .attr("stroke", "#1a1200")
+      .attr("stroke-width", sw+6)
+      .attr("stroke-opacity", 0.9)
+      .attr("marker-end","url(#arrowhead-outline)");
+
+    gArrows.append("path")
+      .attr("class","flow-arrow")
+      .attr("id","arrow-"+i)
+      .attr("data-idx", i)
+      .attr("d", d)
+      .attr("fill","none")
+      .attr("stroke", color)
+      .attr("stroke-width", sw)
+      .attr("stroke-opacity", 1)
+      .attr("marker-end",`url(#${markerId})`);
+
+    gArrows.append("path")
+      .attr("class","flow-arrow-hit")
+      .attr("d", d)
+      .on("click", ()=>onFlowClick(key, from, to, val, i))
+      .on("mousemove",(ev)=>showTip(ev, `<b>${from} → ${to}</b><br>${dateLabel()}<br>${fmt(Math.abs(val))} MMcf/d`))
+      .on("mouseleave", hideTip);
+  });
+
+  buildFlowList();
+  applyFilter();
+  updateDetail();
+}
+
+function dateLabel(){
+  return RAW.header[2+currentDateIdx];
+}
+
+function buildLegend(){
+  const legend = d3.select("#legend");
+  legend.selectAll("*").remove();
+  Object.entries(REGION_COLORS).forEach(([name,color])=>{
+    const item = legend.append("div").attr("class","legend-item").attr("id","legend-"+slug(name))
+      .on("click", ()=>onRegionClick(name));
+    item.append("div").attr("class","swatch").style("background", color);
+    item.append("div").text(name);
+  });
+}
+
+function buildFlowList(){
+  const rows = RAW.rows.map((r,i)=>({r,i, val:getValue(r)}));
+  rows.sort((a,b)=>Math.abs(b.val)-Math.abs(a.val));
+  const list = d3.select("#flowList");
+  list.selectAll("*").remove();
+  rows.forEach(({r,i,val})=>{
+    let [from,to] = r;
+    let v = val;
+    if(v<0){ [from,to]=[to,from]; v=-v; }
+    const row = list.append("div").attr("class","flow-row").attr("data-idx", i)
+      .on("click", ()=>onFlowClick(from+"->"+to, from, to, v, i))
+      .on("mouseenter", function(){ d3.select("#arrow-"+i).attr("stroke","#ffffff"); })
+      .on("mouseleave", function(){ if(selectedFlowKey !== (from+"->"+to)) d3.select("#arrow-"+i).attr("stroke", arrowColors[i] || "#ffce54"); });
+    row.append("div").attr("class","route").text(`${from} → ${to}`);
+    row.append("div").attr("class","val").text(fmt(v)+" MMcf/d");
+  });
+}
+
+function onRegionClick(region){
+  selectedRegion = (selectedRegion===region) ? null : region;
+  selectedFlowKey = null;
+  applyFilter();
+  updateDetail();
+}
+
+function onFlowClick(key, from, to, val, i){
+  selectedFlowKey = (selectedFlowKey===key) ? null : key;
+  selectedRegion = null;
+  applyFilter();
+  updateDetail(from,to,val);
+}
+
+function applyFilter(){
+  d3.selectAll(".legend-item").classed("selected", function(){
+    return this.id === "legend-"+slug(selectedRegion||"");
+  });
+  d3.selectAll(".region-poly").classed("dim", function(){
+    if(!selectedRegion) return false;
+    return this.id !== "region-"+slug(selectedRegion);
+  });
+  const isDimmed = function(){
+    const idx = this.getAttribute("data-idx");
+    const row = RAW.rows[idx];
+    let [from,to] = row;
+    if(selectedRegion){
+      return from!==selectedRegion && to!==selectedRegion;
+    }
+    return false;
+  };
+  d3.selectAll(".flow-arrow-outline").classed("dim", isDimmed);
+  d3.selectAll(".flow-arrow").classed("dim", isDimmed).attr("stroke", function(){
+    const idx = this.getAttribute("data-idx");
+    const row = RAW.rows[idx];
+    let [from,to] = row, val = getValue(row);
+    if(val<0)[from,to]=[to,from];
+    const key = from+"->"+to;
+    return (selectedFlowKey===key) ? "#ffffff" : (arrowColors[idx] || "#ffce54");
+  });
+  d3.selectAll(".flow-row").style("outline", function(){
+    return null;
+  }).style("background", function(){
+    const idx = +this.getAttribute("data-idx");
+    const row = RAW.rows[idx];
+    let [from,to] = row, val = getValue(row);
+    if(val<0)[from,to]=[to,from];
+    const key = from+"->"+to;
+    return selectedFlowKey===key ? "#22314a" : null;
+  });
+}
+
+function updateDetail(from,to,val){
+  const detail = d3.select("#detail");
+  if(selectedFlowKey && from){
+    detail.html(`
+      <b>${from} → ${to}</b><br>
+      기준일: ${dateLabel()}<br>
+      Flow: <b>${fmt(Math.abs(val))} MMcf/d</b><br><br>
+      ${history(from,to)}
+    `);
+  } else if(selectedRegion){
+    const rows = RAW.rows;
+    let inflow=0, outflow=0, lines=[];
+    rows.forEach(r=>{
+      let [f,t] = r; let v = getValue(r);
+      if(v<0){ [f,t]=[t,f]; v=-v; }
+      if(f===selectedRegion){ outflow+=v; lines.push(`→ ${t}: ${fmt(v)}`); }
+      if(t===selectedRegion){ inflow+=v; lines.push(`← ${f}: ${fmt(v)}`); }
+    });
+    detail.html(`
+      <b>${selectedRegion}</b> (${dateLabel()})<br>
+      유입 합계: <b>${fmt(inflow)}</b> MMcf/d<br>
+      유출 합계: <b>${fmt(outflow)}</b> MMcf/d<br>
+      순 유입: <b>${fmt(inflow-outflow)}</b> MMcf/d<br><br>
+      ${lines.map(l=>`<div>${l}</div>`).join("")}
+    `);
+  } else {
+    detail.html("지역 또는 화살표를 클릭하면 상세 정보가 표시됩니다.");
+  }
+}
+
+function history(from,to){
+  const row = RAW.rows.find(r=>(r[0]===from&&r[1]===to)||(r[0]===to&&r[1]===from));
+  if(!row) return "";
+  const header = RAW.header.slice(2);
+  const vals = row.slice(2);
+  const items = header.map((h,i)=>{
+    let v = vals[i];
+    let dir = (row[0]===from) ? v : -v;
+    return `<div style="display:flex;justify-content:space-between;"><span>${h}</span><span>${fmt(Math.abs(dir))} (${dir>=0? row[0]+"→"+row[1] : row[1]+"→"+row[0]})</span></div>`;
+  });
+  return `<div style="max-height:160px;overflow-y:auto;border-top:1px solid #2a3242;padding-top:6px;">${items.join("")}</div>`;
+}
+
+function showTip(ev, html){
+  const [x,y] = d3.pointer(ev, document.getElementById("mapWrap"));
+  tooltip.style("display","block").html(html)
+    .style("left", (x+16)+"px")
+    .style("top", (y+10)+"px");
+}
+function hideTip(){ tooltip.style("display","none"); }
+
+d3.select("#resetBtn").on("click", ()=>{
+  selectedRegion=null; selectedFlowKey=null; applyFilter(); updateDetail();
+});
+
+d3.select("#bgOpacity").on("input", function(){
+  d3.select("#bgimg").style("opacity", (+this.value/100));
+});
+
+window.addEventListener("resize", fitMapStage);
+
+fitMapStage();
+initZoomPan();
+try {
+  RAW = FLOW_DATA;
+  buildDateSelector(FLOW_DATA.header);
+  buildMap();
+  buildPlays();
+  buildLegend();
+  renderAll();
+} catch(err){
+  console.error(err);
+  document.getElementById("mapWrap").insertAdjacentHTML("beforeend",
+    `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:40px;text-align:center;color:#f0c777;font-size:14px;background:rgba(5,8,13,.9);z-index:30;">
+      대시보드 초기화 중 오류가 발생했습니다.<br>${(err && err.message) || err}
+     </div>`);
+}
+</script>
+</body>
+</html>
